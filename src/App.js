@@ -6,7 +6,7 @@ const App = () => {
   const [processing, setProcessing] = useState(false);
   const [diagnostics, setDiagnostics] = useState("");
 
-  const PINK_NOISE_TARGET = -18; // dBFS
+  const PINK_NOISE_TARGET = -12; // dBFS
   const SILENCE_THRESHOLD = -60; // dBFS
 
   const addDiagnostic = (msg) => {
