@@ -1,359 +1,535 @@
-import React, { useState } from "react";
-import { Upload, X, Music, Activity } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { Play, Pause, Upload, Square } from "lucide-react";
+import * as Tone from "tone";
 
-const App = () => {
-  const [stems, setStems] = useState([]);
-  const [processing, setProcessing] = useState(false);
-  const [diagnostics, setDiagnostics] = useState("");
+const DAW = () => {
+  const [tracks, setTracks] = useState([
+    { id: "empty_1", name: "Track 1", isEmpty: true },
+    { id: "empty_2", name: "Track 2", isEmpty: true },
+    { id: "empty_3", name: "Track 3", isEmpty: true },
+    { id: "empty_4", name: "Track 4", isEmpty: true },
+  ]);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [showPinkNoise, setShowPinkNoise] = useState({});
 
-  const PINK_NOISE_TARGET = -12; // dBFS
-  const SILENCE_THRESHOLD = -60; // dBFS
+  const tracksRef = useRef({});
+  const pinkNoiseRefs = useRef({});
+  const animationFrameRef = useRef(null);
+  const timelineRef = useRef(null);
+  const waveformCanvasRefs = useRef({});
+  const spectrumCanvasRefs = useRef({});
 
-  const addDiagnostic = (msg) => {
-    setDiagnostics((prev) => prev + msg + "\n");
-  };
-
-  const categorizeFile = (filename) => {
-    const lower = filename.toLowerCase();
-    if (/kick|snare|hat|cymbal|perc|beat|drum/.test(lower)) return "Drums";
-    if (/bass|sub|808|low/.test(lower)) return "Bass";
-    if (/vocal|vox|voice|lead|sing/.test(lower)) return "Vocals";
-    if (/synth|pad|keys|piano/.test(lower)) return "Synth";
-    if (/guitar|gtr|acoustic|electric/.test(lower)) return "Guitar";
-    if (/fx|effect|riser|sweep|impact/.test(lower)) return "FX";
-    return "Misc";
-  };
-
-  const cleanFilename = (filename) => {
-    return filename
-      .replace(/\.[^/.]+$/, "") // Remove extension
-      .replace(/[_-]+/g, " ") // Replace underscores/dashes with spaces
-      .replace(/\d+/g, "") // Remove numbers
-      .replace(/\s+/g, " ") // Collapse multiple spaces
-      .trim();
-  };
-
-  const analyzeAudioBuffer = (audioBuffer, filename) => {
-    const channelData = audioBuffer.getChannelData(0);
-    const sampleRate = audioBuffer.sampleRate;
-    const duration = audioBuffer.duration;
-
-    // Silence detection and RMS calculation
-    let sumSquares = 0;
-    let nonSilentSamples = 0;
-    let peak = 0;
-
-    for (let i = 0; i < channelData.length; i++) {
-      const sample = Math.abs(channelData[i]);
-      peak = Math.max(peak, sample);
-
-      const sampleDb = 20 * Math.log10(sample + 1e-10);
-      if (sampleDb > SILENCE_THRESHOLD) {
-        sumSquares += channelData[i] * channelData[i];
-        nonSilentSamples++;
+  useEffect(() => {
+    return () => {
+      Object.values(tracksRef.current).forEach((track) => {
+        track.player?.dispose();
+        track.eq?.dispose();
+        track.analyser?.dispose();
+      });
+      Object.values(pinkNoiseRefs.current).forEach((noise) => {
+        noise?.dispose();
+      });
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
       }
-    }
-
-    const rms = Math.sqrt(sumSquares / (nonSilentSamples || 1));
-    const rmsDb = 20 * Math.log10(rms + 1e-10);
-    const peakDb = 20 * Math.log10(peak + 1e-10);
-    const crestFactor = peakDb - rmsDb;
-
-    // Spectral analysis (simplified)
-    const fftSize = 2048;
-    const numBins = Math.floor(channelData.length / fftSize);
-    let spectralCentroid = 0;
-    let totalMagnitude = 0;
-
-    for (let bin = 0; bin < Math.min(numBins, 100); bin++) {
-      const start = bin * fftSize;
-      let magnitude = 0;
-      for (let i = start; i < start + fftSize && i < channelData.length; i++) {
-        magnitude += Math.abs(channelData[i]);
-      }
-      const frequency = (bin * sampleRate) / fftSize;
-      spectralCentroid += frequency * magnitude;
-      totalMagnitude += magnitude;
-    }
-
-    spectralCentroid =
-      totalMagnitude > 0 ? spectralCentroid / totalMagnitude : 0;
-    const brightness = Math.min(100, (spectralCentroid / 5000) * 100);
-
-    let spectralTilt;
-    if (brightness < 30) spectralTilt = "dark";
-    else if (brightness > 60) spectralTilt = "bright";
-    else spectralTilt = "balanced";
-
-    // Calculate gain adjustment
-    const gainNeeded = PINK_NOISE_TARGET - rmsDb;
-    let recommendation;
-    if (Math.abs(gainNeeded) < 1) recommendation = "MINIMAL";
-    else if (gainNeeded > 0) recommendation = "BOOST";
-    else recommendation = "REDUCE";
-
-    const category = categorizeFile(filename);
-    const cleanName = cleanFilename(filename);
-
-    addDiagnostic(`\n━━━ Processing: ${filename} ━━━`);
-    addDiagnostic(`Category: ${category}`);
-    addDiagnostic(
-      `Duration: ${duration.toFixed(2)}s | Sample Rate: ${sampleRate}Hz`
-    );
-    addDiagnostic(`RMS Level: ${rmsDb.toFixed(2)} dBFS`);
-    addDiagnostic(`Peak Level: ${peakDb.toFixed(2)} dBFS`);
-    addDiagnostic(`Crest Factor: ${crestFactor.toFixed(2)} dB`);
-    addDiagnostic(`Spectral Centroid: ${spectralCentroid.toFixed(0)} Hz`);
-    addDiagnostic(`Brightness: ${brightness.toFixed(0)}% (${spectralTilt})`);
-    addDiagnostic(`Target: ${PINK_NOISE_TARGET} dBFS`);
-    addDiagnostic(
-      `Gain Adjustment: ${gainNeeded > 0 ? "+" : ""}${gainNeeded.toFixed(
-        2
-      )} dB (${recommendation})`
-    );
-    addDiagnostic(`✓ Ready for mixing\n`);
-
-    return {
-      id: Date.now() + Math.random(),
-      filename,
-      cleanName,
-      category,
-      duration,
-      sampleRate,
-      rmsDb,
-      peakDb,
-      crestFactor,
-      spectralCentroid,
-      brightness,
-      spectralTilt,
-      gainNeeded,
-      recommendation,
     };
+  }, []);
+
+  useEffect(() => {
+    if (isPlaying) {
+      const updateTime = () => {
+        const maxDuration = Math.max(
+          ...Object.values(tracksRef.current)
+            .filter((t) => t.buffer)
+            .map((t) => t.buffer.duration),
+          0
+        );
+
+        setDuration(maxDuration);
+        setCurrentTime(Tone.Transport.seconds);
+
+        timelineRef.current = requestAnimationFrame(updateTime);
+      };
+      updateTime();
+      startAnalysis();
+    } else {
+      if (timelineRef.current) {
+        cancelAnimationFrame(timelineRef.current);
+      }
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    }
+
+    return () => {
+      if (timelineRef.current) cancelAnimationFrame(timelineRef.current);
+      if (animationFrameRef.current)
+        cancelAnimationFrame(animationFrameRef.current);
+    };
+  }, [isPlaying]);
+
+  const handleFileUpload = async (e, trackId) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const arrayBuffer = await file.arrayBuffer();
+    const audioBuffer = await Tone.getContext().decodeAudioData(arrayBuffer);
+
+    if (tracksRef.current[trackId]) {
+      tracksRef.current[trackId].player?.dispose();
+      tracksRef.current[trackId].eq?.dispose();
+      tracksRef.current[trackId].analyser?.dispose();
+    }
+
+    const player = new Tone.Player(audioBuffer);
+    const eq = new Tone.EQ3({ low: 0, mid: 0, high: 0 });
+    const gain = new Tone.Gain(1);
+    const analyser = new Tone.Analyser("fft", 2048);
+
+    player.chain(eq, gain, analyser, Tone.Destination);
+    player.sync().start(0);
+
+    // Create pink noise for this track
+    const pinkNoise = new Tone.Noise("pink").toDestination();
+    pinkNoise.volume.value = -30;
+    const pinkAnalyser = new Tone.Analyser("fft", 2048);
+    pinkNoise.connect(pinkAnalyser);
+
+    pinkNoiseRefs.current[trackId] = {
+      noise: pinkNoise,
+      analyser: pinkAnalyser,
+    };
+
+    tracksRef.current[trackId] = {
+      player,
+      eq,
+      gain,
+      analyser,
+      buffer: audioBuffer,
+    };
+
+    setTracks((prev) =>
+      prev.map((t) =>
+        t.id === trackId
+          ? {
+              ...t,
+              name: file.name,
+              isEmpty: false,
+              volume: 0,
+              eq: { low: 0, mid: 0, high: 0 },
+              duration: audioBuffer.duration,
+            }
+          : t
+      )
+    );
+
+    setDuration((prev) => Math.max(prev, audioBuffer.duration));
+
+    // Draw waveform
+    drawWaveform(trackId, audioBuffer);
   };
 
-  const processFile = async (file) => {
-    try {
-      addDiagnostic(`\n>>> Loading: ${file.name}...`);
+  const drawWaveform = (trackId, audioBuffer) => {
+    const canvas = waveformCanvasRefs.current[trackId];
+    if (!canvas) return;
 
-      // Use shared AudioContext
-      if (!window.audioContextInstance) {
-        window.audioContextInstance = new (window.AudioContext ||
-          window.webkitAudioContext)();
+    const ctx = canvas.getContext("2d");
+    const width = canvas.width;
+    const height = canvas.height;
+
+    ctx.fillStyle = "#1a1a2e";
+    ctx.fillRect(0, 0, width, height);
+
+    const data = audioBuffer.getChannelData(0);
+    const step = Math.ceil(data.length / width);
+    const amp = height / 2;
+
+    ctx.fillStyle = "#8b5cf6";
+    ctx.beginPath();
+
+    for (let i = 0; i < width; i++) {
+      let min = 1.0;
+      let max = -1.0;
+
+      for (let j = 0; j < step; j++) {
+        const datum = data[i * step + j];
+        if (datum < min) min = datum;
+        if (datum > max) max = datum;
       }
-      const audioContext = window.audioContextInstance;
 
-      const arrayBuffer = await file.arrayBuffer();
-      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      const yMin = (1 + min) * amp;
+      const yMax = (1 + max) * amp;
 
-      const analysis = analyzeAudioBuffer(audioBuffer, file.name);
-      setStems((prev) => [...prev, analysis]);
-    } catch (error) {
-      addDiagnostic(`✗ Error processing ${file.name}: ${error.message}`);
-      console.error(error);
+      ctx.fillRect(i, yMin, 1, yMax - yMin || 1);
     }
   };
 
-  const handleFiles = async (files) => {
-    setProcessing(true);
-    addDiagnostic("\n═══════════════════════════════════════");
-    addDiagnostic("Starting batch analysis...");
-    addDiagnostic("═══════════════════════════════════════");
+  const drawSpectrum = (trackId) => {
+    const canvas = spectrumCanvasRefs.current[trackId];
+    if (!canvas) return;
 
-    for (const file of files) {
-      if (file.type.includes("audio") || file.name.match(/\.(mp3|wav)$/i)) {
-        await processFile(file);
+    const ctx = canvas.getContext("2d");
+    const width = canvas.width;
+    const height = canvas.height;
+
+    ctx.fillStyle = "#0f0f1e";
+    ctx.fillRect(0, 0, width, height);
+
+    // Draw grid
+    ctx.strokeStyle = "#1a1a2e";
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 5; i++) {
+      const y = (height / 5) * i;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+    }
+
+    const trackData = tracksRef.current[trackId];
+    if (trackData?.analyser) {
+      const values = trackData.analyser.getValue();
+
+      // Draw track spectrum
+      ctx.strokeStyle = "#8b5cf6";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+
+      const sliceWidth = width / values.length;
+      let x = 0;
+
+      for (let i = 0; i < values.length; i++) {
+        const v = Math.max(-100, values[i]);
+        const y = height - ((v + 100) / 100) * height;
+
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+        x += sliceWidth;
+      }
+      ctx.stroke();
+    }
+
+    // Draw pink noise overlay if enabled
+    if (showPinkNoise[trackId] && pinkNoiseRefs.current[trackId]?.analyser) {
+      const pinkValues = pinkNoiseRefs.current[trackId].analyser.getValue();
+
+      ctx.strokeStyle = "#ec4899";
+      ctx.lineWidth = 1.5;
+      ctx.globalAlpha = 0.6;
+      ctx.beginPath();
+
+      const sliceWidth = width / pinkValues.length;
+      let x = 0;
+
+      for (let i = 0; i < pinkValues.length; i++) {
+        const v = Math.max(-100, pinkValues[i]);
+        const y = height - ((v + 100) / 100) * height;
+
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+        x += sliceWidth;
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  };
+
+  const startAnalysis = () => {
+    const analyze = () => {
+      tracks.forEach((track) => {
+        if (!track.isEmpty) {
+          drawSpectrum(track.id);
+        }
+      });
+      animationFrameRef.current = requestAnimationFrame(analyze);
+    };
+    analyze();
+  };
+
+  const togglePlayback = async () => {
+    if (!isPlaying) {
+      await Tone.start();
+      Tone.Transport.start();
+
+      // Start pink noise for tracks that have it enabled
+      Object.entries(showPinkNoise).forEach(([trackId, enabled]) => {
+        if (enabled && pinkNoiseRefs.current[trackId]) {
+          pinkNoiseRefs.current[trackId].noise.start();
+        }
+      });
+
+      setIsPlaying(true);
+    } else {
+      Tone.Transport.pause();
+      Object.values(pinkNoiseRefs.current).forEach((ref) => {
+        ref?.noise.stop();
+      });
+      setIsPlaying(false);
+    }
+  };
+
+  const stopPlayback = () => {
+    Tone.Transport.stop();
+    Object.values(pinkNoiseRefs.current).forEach((ref) => {
+      ref?.noise.stop();
+    });
+    setCurrentTime(0);
+    setIsPlaying(false);
+  };
+
+  const updateTrackVolume = (trackId, volume) => {
+    setTracks((prev) =>
+      prev.map((t) => (t.id === trackId ? { ...t, volume } : t))
+    );
+    const track = tracksRef.current[trackId];
+    if (track?.gain) {
+      track.gain.gain.rampTo(Tone.dbToGain(volume), 0.1);
+    }
+  };
+
+  const updateEQ = (trackId, band, value) => {
+    setTracks((prev) =>
+      prev.map((t) =>
+        t.id === trackId ? { ...t, eq: { ...t.eq, [band]: value } } : t
+      )
+    );
+    const track = tracksRef.current[trackId];
+    if (track?.eq) {
+      track.eq[band].value = value;
+    }
+  };
+
+  const togglePinkNoise = (trackId) => {
+    const newState = !showPinkNoise[trackId];
+    setShowPinkNoise((prev) => ({ ...prev, [trackId]: newState }));
+
+    if (pinkNoiseRefs.current[trackId]) {
+      if (newState && isPlaying) {
+        pinkNoiseRefs.current[trackId].noise.start();
       } else {
-        addDiagnostic(`✗ Skipped: ${file.name} (not audio)`);
+        pinkNoiseRefs.current[trackId].noise.stop();
       }
     }
-
-    addDiagnostic("\n═══════════════════════════════════════");
-    addDiagnostic(`✓ Analysis complete! ${files.length} file(s) processed.`);
-    addDiagnostic("═══════════════════════════════════════\n");
-    setProcessing(false);
   };
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    const files = Array.from(e.dataTransfer.files);
-    handleFiles(files);
+  const seekTo = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const percent = x / rect.width;
+    const time = percent * duration;
+
+    Tone.Transport.seconds = time;
+    setCurrentTime(time);
   };
 
-  const handleFileSelect = (e) => {
-    const files = Array.from(e.target.files);
-    handleFiles(files);
-  };
-
-  const removeStem = (id) => {
-    setStems((prev) => prev.filter((s) => s.id !== id));
-  };
-
-  const getCategoryColor = (category) => {
-    const colors = {
-      Drums: "bg-red-500",
-      Bass: "bg-orange-500",
-      Vocals: "bg-blue-500",
-      Synth: "bg-purple-500",
-      Guitar: "bg-yellow-500",
-      FX: "bg-green-500",
-      Misc: "bg-gray-500",
-    };
-    return colors[category] || colors.Misc;
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-8">
-      <div className="max-w-7xl mx-auto">
-        <div className="text-center mb-8">
-          <h1 className="text-5xl font-bold text-white mb-2 flex items-center justify-center gap-3">
-            <Activity className="w-12 h-12 text-purple-400" />
-            Pink Noise Stem Leveler
-          </h1>
-          <p className="text-purple-300">
-            DSP Analysis & Gain Staging Tool for Ableton Live
-          </p>
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 text-white">
+      <div className="h-screen flex flex-col">
+        {/* Header */}
+        <header className="bg-gray-900/80 backdrop-blur border-b border-gray-700 p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+                Browser DAW
+              </h1>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={togglePlayback}
+                className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg flex items-center gap-2 transition"
+              >
+                {isPlaying ? <Pause size={18} /> : <Play size={18} />}
+              </button>
+
+              <button
+                onClick={stopPlayback}
+                className="bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded-lg flex items-center gap-2 transition"
+              >
+                <Square size={18} />
+              </button>
+
+              <div className="text-sm font-mono bg-gray-800 px-4 py-2 rounded-lg flex items-center">
+                {formatTime(currentTime)} / {formatTime(duration)}
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Timeline */}
+        <div className="bg-gray-800 border-b border-gray-700 h-12 flex items-center px-4">
+          <div className="w-48" />
+          <div className="w-64" />
+          <div
+            className="flex-1 relative h-6 bg-gray-900 rounded cursor-pointer ml-4"
+            onClick={seekTo}
+          >
+            <div
+              className="absolute top-0 bottom-0 w-0.5 bg-pink-500 z-10"
+              style={{
+                left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
+              }}
+            />
+            <div className="absolute inset-0 flex justify-between px-2 text-xs text-gray-500 pointer-events-none">
+              {[...Array(11)].map((_, i) => (
+                <div key={i}>{formatTime((duration / 10) * i)}</div>
+              ))}
+            </div>
+          </div>
         </div>
 
-        <div className="grid lg:grid-cols-2 gap-6">
-          {/* Left Column: Upload & Stems */}
-          <div className="space-y-6">
-            {/* Upload Area */}
+        {/* Tracks */}
+        <div className="flex-1 overflow-y-auto">
+          {tracks.map((track) => (
             <div
-              className="bg-slate-800 rounded-lg p-8 border-2 border-dashed border-purple-400 hover:border-purple-300 transition-colors"
-              onDrop={handleDrop}
-              onDragOver={(e) => e.preventDefault()}
+              key={track.id}
+              className="border-b border-gray-700 flex bg-gray-800/50 h-32"
             >
-              <div className="text-center">
-                <Upload className="w-16 h-16 text-purple-400 mx-auto mb-4" />
-                <h2 className="text-2xl font-bold text-white mb-2">
-                  Drop Audio Files
-                </h2>
-                <p className="text-purple-300 mb-4">
-                  MP3 or WAV files supported
-                </p>
-                <label className="inline-block">
-                  <input
-                    type="file"
-                    multiple
-                    accept="audio/*,.mp3,.wav"
-                    onChange={handleFileSelect}
-                    className="hidden"
-                  />
-                  <span className="bg-purple-600 hover:bg-purple-500 text-white px-6 py-3 rounded-lg cursor-pointer inline-block transition-colors">
-                    Browse Files
-                  </span>
-                </label>
+              {/* Track Name & Controls */}
+              <div className="w-48 p-3 border-r border-gray-700 flex flex-col justify-between">
+                <div>
+                  <div className="font-semibold text-sm mb-2">{track.name}</div>
+                  {track.isEmpty ? (
+                    <label className="cursor-pointer bg-purple-600/50 hover:bg-purple-600 px-3 py-1.5 rounded text-xs flex items-center gap-1 transition justify-center">
+                      <Upload size={14} />
+                      <span>Load</span>
+                      <input
+                        type="file"
+                        accept="audio/*"
+                        onChange={(e) => handleFileUpload(e, track.id)}
+                        className="hidden"
+                      />
+                    </label>
+                  ) : (
+                    <div>
+                      <label className="text-xs text-gray-400">
+                        Vol: {track.volume.toFixed(1)} dB
+                      </label>
+                      <input
+                        type="range"
+                        min="-60"
+                        max="12"
+                        step="0.5"
+                        value={track.volume}
+                        onChange={(e) =>
+                          updateTrackVolume(
+                            track.id,
+                            parseFloat(e.target.value)
+                          )
+                        }
+                        className="w-full"
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
 
-            {/* Stems List */}
-            <div className="bg-slate-800 rounded-lg p-6">
-              <h2 className="text-2xl font-bold text-white mb-4 flex items-center gap-2">
-                <Music className="w-6 h-6" />
-                Loaded Stems ({stems.length})
-              </h2>
-              <div className="space-y-3 max-h-[600px] overflow-y-auto">
-                {stems.length === 0 && (
-                  <p className="text-purple-300 text-center py-8">
-                    No stems loaded yet
-                  </p>
-                )}
-                {stems.map((stem) => (
-                  <div
-                    key={stem.id}
-                    className="bg-slate-700 rounded-lg p-4 relative"
-                  >
-                    <button
-                      onClick={() => removeStem(stem.id)}
-                      className="absolute top-2 right-2 text-red-400 hover:text-red-300"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
-                    <div className="mb-2">
-                      <span
-                        className={`${getCategoryColor(
-                          stem.category
-                        )} text-white text-xs px-2 py-1 rounded`}
-                      >
-                        {stem.category}
-                      </span>
+              {/* Channel Strip - Spectrum & EQ */}
+              <div className="w-64 border-r border-gray-700 bg-gray-900/50 p-2">
+                {!track.isEmpty ? (
+                  <div className="h-full flex flex-col">
+                    <div className="flex-1 mb-2">
+                      <canvas
+                        ref={(el) =>
+                          (spectrumCanvasRefs.current[track.id] = el)
+                        }
+                        width={240}
+                        height={60}
+                        className="w-full h-full rounded border border-gray-700"
+                      />
                     </div>
-                    <h3 className="text-white font-semibold mb-2">
-                      {stem.cleanName || stem.filename}
-                    </h3>
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div>
-                        <span className="text-purple-300">RMS:</span>
-                        <span className="text-white ml-2">
-                          {stem.rmsDb.toFixed(1)} dB
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-purple-300">Peak:</span>
-                        <span className="text-white ml-2">
-                          {stem.peakDb.toFixed(1)} dB
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-purple-300">Gain:</span>
-                        <span
-                          className={`ml-2 font-semibold ${
-                            stem.gainNeeded > 0
-                              ? "text-green-400"
-                              : "text-orange-400"
-                          }`}
-                        >
-                          {stem.gainNeeded > 0 ? "+" : ""}
-                          {stem.gainNeeded.toFixed(1)} dB
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-purple-300">Spectral:</span>
-                        <span className="text-white ml-2">
-                          {stem.spectralTilt}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="mt-2 text-xs">
-                      <span
-                        className={`px-2 py-1 rounded ${
-                          stem.recommendation === "BOOST"
-                            ? "bg-green-900 text-green-200"
-                            : stem.recommendation === "REDUCE"
-                            ? "bg-orange-900 text-orange-200"
-                            : "bg-blue-900 text-blue-200"
+
+                    <div className="flex gap-1 mb-1">
+                      <button
+                        onClick={() => togglePinkNoise(track.id)}
+                        className={`flex-1 px-2 py-1 rounded text-xs transition ${
+                          showPinkNoise[track.id]
+                            ? "bg-pink-600 hover:bg-pink-700"
+                            : "bg-gray-700 hover:bg-gray-600"
                         }`}
                       >
-                        {stem.recommendation}
-                      </span>
+                        Pink
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-1">
+                      {["low", "mid", "high"].map((band) => (
+                        <div key={band} className="text-center">
+                          <input
+                            type="range"
+                            min="-20"
+                            max="20"
+                            step="1"
+                            value={track.eq?.[band] || 0}
+                            onChange={(e) =>
+                              updateEQ(
+                                track.id,
+                                band,
+                                parseFloat(e.target.value)
+                              )
+                            }
+                            className="w-full"
+                            style={{
+                              writingMode: "bt-lr",
+                              WebkitAppearance: "slider-vertical",
+                              height: "30px",
+                            }}
+                          />
+                          <label className="text-xs text-gray-400">
+                            {band[0].toUpperCase()}
+                          </label>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                ))}
+                ) : (
+                  <div className="h-full flex items-center justify-center text-gray-600 text-xs">
+                    No audio loaded
+                  </div>
+                )}
+              </div>
+
+              {/* Waveform Display */}
+              <div className="flex-1 relative bg-gray-900/30">
+                {!track.isEmpty && track.duration && (
+                  <>
+                    <canvas
+                      ref={(el) => (waveformCanvasRefs.current[track.id] = el)}
+                      width={800}
+                      height={128}
+                      className="absolute inset-0 w-full h-full"
+                    />
+
+                    {/* Playhead */}
+                    {duration > 0 && (
+                      <div
+                        className="absolute top-0 bottom-0 w-0.5 bg-pink-500 pointer-events-none"
+                        style={{ left: `${(currentTime / duration) * 100}%` }}
+                      />
+                    )}
+                  </>
+                )}
               </div>
             </div>
-          </div>
-
-          {/* Right Column: Diagnostics */}
-          <div className="bg-slate-800 rounded-lg p-6">
-            <h2 className="text-2xl font-bold text-white mb-4">
-              Diagnostic Output
-            </h2>
-            <div className="bg-black rounded-lg p-4 h-[600px] overflow-y-auto font-mono text-sm">
-              <pre className="text-green-400 whitespace-pre-wrap">
-                {diagnostics ||
-                  "> Ready to process audio files...\n> Drop or select files to begin analysis."}
-              </pre>
-              {processing && (
-                <div className="text-yellow-400 animate-pulse">
-                  > Processing...
-                </div>
-              )}
-            </div>
-          </div>
+          ))}
         </div>
       </div>
     </div>
   );
 };
 
-export default App;
+export default DAW;
