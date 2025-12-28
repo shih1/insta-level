@@ -18,7 +18,7 @@ export const PlaybackControls = ({
     <header className="bg-gray-900/80 backdrop-blur border-b border-gray-700 p-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-          Yoshih Digital Audio Workstation
+          Digital Audio Workstation
         </h1>
 
         <div className="flex gap-3">
