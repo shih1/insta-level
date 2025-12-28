@@ -23,12 +23,17 @@ export class PinkCeilingEffect {
     this.calculatedGain = 0;
 
     this.params = {
-      fftSize: new AudioParameter("FFT Size", 2048, 512, 8192, "", (val) => {
-        this.analyser.size = val;
+      fftSize: new AudioParameter("FFT Size", 2048, 512, 16384, "", (val) => {
+        // Ensure value is power of 2
+        const pow2 = Math.pow(2, Math.round(Math.log2(val)));
+        this.analyser.size = pow2;
         this.generatePinkReference();
       }),
       silenceThreshold: new AudioParameter("Gate", -60, -80, -20, "dB"),
-      pinkLevel: new AudioParameter("Ref Level", -18, -40, 0, "dB", () => {
+      pinkLevel: new AudioParameter("Ref Level", -18, -60, 0, "dB", () => {
+        this.generatePinkReference();
+      }),
+      pinkSlope: new AudioParameter("Slope", -3, -18, 0, "dB/oct", () => {
         this.generatePinkReference();
       }),
       outputGain: new AudioParameter("Output", 0, -60, 12, "dB", (val) => {
@@ -42,14 +47,15 @@ export class PinkCeilingEffect {
   generatePinkReference() {
     const fftSize = this.params.fftSize.getValue();
     const refDb = this.params.pinkLevel.getValue();
+    const slopeDbPerOctave = this.params.pinkSlope.getValue();
     this.pinkReference = new Float32Array(fftSize / 2);
 
     for (let i = 0; i < this.pinkReference.length; i++) {
       const freq = (i * Tone.getContext().sampleRate) / fftSize;
       if (freq > 0) {
-        // Pink noise falls off at -3dB per octave (1/sqrt(freq))
-        // Store in dB for direct comparison with FFT output
-        const pinkSlope = -10 * Math.log10(freq / 1000); // -3dB per octave relative to 1kHz
+        // Adjustable slope in dB per octave relative to 1kHz
+        const octavesFrom1k = Math.log2(freq / 1000);
+        const pinkSlope = slopeDbPerOctave * octavesFrom1k;
         this.pinkReference[i] = refDb + pinkSlope;
       } else {
         this.pinkReference[i] = refDb;
@@ -71,28 +77,35 @@ export class PinkCeilingEffect {
 
     const fftSize = this.params.fftSize.getValue();
     const channelData = audioBuffer.getChannelData(0);
-    const hopSize = fftSize / 2; // 50% overlap
+    const hopSize = fftSize / 4; // 75% overlap
+
     const totalChunks = Math.floor((channelData.length - fftSize) / hopSize);
     let chunkCount = 0;
 
-    // Perform manual FFT analysis
-    for (let i = 0; i <= channelData.length - fftSize; i += hopSize) {
-      const chunk = channelData.slice(i, i + fftSize);
+    // Process in batches to avoid blocking
+    const batchSize = 50;
 
-      // Apply Hann window to reduce spectral leakage
-      const windowed = new Float32Array(fftSize);
+    for (let i = 0; i <= channelData.length - fftSize; i += hopSize) {
+      const chunk = new Float32Array(fftSize);
+
+      // Apply Hann window while copying
       for (let j = 0; j < fftSize; j++) {
-        const window = 0.5 * (1 - Math.cos((2 * Math.PI * j) / (fftSize - 1)));
-        windowed[j] = chunk[j] * window;
+        const window = 0.5 * (1 - Math.cos((2 * Math.PI * j) / fftSize));
+        chunk[j] = channelData[i + j] * window;
       }
 
-      // Compute FFT manually using the Web Audio API approach
-      const spectrum = this.computeFFT(windowed);
+      // Fast FFT using Cooley-Tukey algorithm
+      const fftResult = this.cooleyTukeyFFT(chunk);
+      const spectrum = this.computeMagnitudeSpectrum(fftResult);
       this.updateMaxSpectrum(spectrum);
 
       chunkCount++;
-      if (onProgress && chunkCount % 50 === 0) {
-        onProgress(Math.round((chunkCount / totalChunks) * 100));
+
+      // Yield to UI every batch
+      if (chunkCount % batchSize === 0) {
+        if (onProgress) {
+          onProgress(Math.round((chunkCount / totalChunks) * 100));
+        }
         await new Promise((r) => setTimeout(r, 0));
       }
     }
@@ -101,26 +114,69 @@ export class PinkCeilingEffect {
     if (onProgress) onProgress(100);
   }
 
-  computeFFT(timeData) {
-    const fftSize = timeData.length;
-    const spectrum = new Float32Array(fftSize / 2);
+  cooleyTukeyFFT(x) {
+    const N = x.length;
 
-    // Simple DFT for magnitude spectrum
-    for (let k = 0; k < fftSize / 2; k++) {
-      let real = 0;
-      let imag = 0;
+    // Base case
+    if (N <= 1) {
+      return [{ re: x[0] || 0, im: 0 }];
+    }
 
-      for (let n = 0; n < fftSize; n++) {
-        const angle = (2 * Math.PI * k * n) / fftSize;
-        real += timeData[n] * Math.cos(angle);
-        imag -= timeData[n] * Math.sin(angle);
-      }
+    // Check if N is power of 2
+    if (N & (N - 1)) {
+      // Not a power of 2, pad to next power of 2
+      const nextPow2 = Math.pow(2, Math.ceil(Math.log2(N)));
+      const padded = new Float32Array(nextPow2);
+      padded.set(x);
+      return this.cooleyTukeyFFT(padded);
+    }
 
-      // Magnitude in linear scale
-      const magnitude = Math.sqrt(real * real + imag * imag) / fftSize;
+    // Divide
+    const even = new Float32Array(N / 2);
+    const odd = new Float32Array(N / 2);
+    for (let i = 0; i < N / 2; i++) {
+      even[i] = x[i * 2];
+      odd[i] = x[i * 2 + 1];
+    }
 
-      // Convert to dB (with floor to avoid log(0))
-      spectrum[k] = magnitude > 0 ? 20 * Math.log10(magnitude + 1e-10) : -100;
+    // Conquer
+    const evenFFT = this.cooleyTukeyFFT(even);
+    const oddFFT = this.cooleyTukeyFFT(odd);
+
+    // Combine
+    const result = new Array(N);
+    for (let k = 0; k < N / 2; k++) {
+      const angle = (-2 * Math.PI * k) / N;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+
+      const tRe = cos * oddFFT[k].re - sin * oddFFT[k].im;
+      const tIm = cos * oddFFT[k].im + sin * oddFFT[k].re;
+
+      result[k] = {
+        re: evenFFT[k].re + tRe,
+        im: evenFFT[k].im + tIm,
+      };
+
+      result[k + N / 2] = {
+        re: evenFFT[k].re - tRe,
+        im: evenFFT[k].im - tIm,
+      };
+    }
+
+    return result;
+  }
+
+  computeMagnitudeSpectrum(fftResult) {
+    const N = fftResult.length;
+    const spectrum = new Float32Array(N / 2);
+
+    for (let i = 0; i < N / 2; i++) {
+      const magnitude =
+        Math.sqrt(
+          fftResult[i].re * fftResult[i].re + fftResult[i].im * fftResult[i].im
+        ) / N;
+      spectrum[i] = magnitude > 1e-10 ? 20 * Math.log10(magnitude) : -100;
     }
 
     return spectrum;
@@ -248,19 +304,40 @@ export const PinkCeilingControls = ({ effect, trackId, engineRef }) => {
         );
       };
 
-      // Draw grid lines
+      // Draw grid lines with frequency labels
       ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
       ctx.lineWidth = 1;
+      ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
+      ctx.font = "9px monospace";
+      ctx.textAlign = "center";
+
       [100, 1000, 10000].forEach((f) => {
         const x = (Math.log10(f / 20) / Math.log10(22050 / 20)) * width;
         ctx.beginPath();
         ctx.moveTo(x, 0);
         ctx.lineTo(x, height);
         ctx.stroke();
+
+        // Frequency labels at bottom
+        ctx.fillText(f >= 1000 ? `${f / 1000}k` : f, x, height - 2);
       });
 
-      // Draw 0dB line
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+      // Draw horizontal dB lines
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
+      ctx.textAlign = "right";
+      [-60, -40, -20, 0].forEach((db) => {
+        const y = height - ((db + 100) / 100) * height;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+
+        // dB labels on left
+        ctx.fillText(`${db}dB`, width - 3, y - 2);
+      });
+
+      // Draw 0dB line more prominently
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
       ctx.setLineDash([2, 2]);
       const zeroDbY = height - ((0 + 100) / 100) * height;
       ctx.beginPath();
@@ -272,16 +349,37 @@ export const PinkCeilingControls = ({ effect, trackId, engineRef }) => {
       // Draw Pink Reference (dashed pink line)
       if (effect.pinkReference) {
         ctx.beginPath();
-        ctx.strokeStyle = "rgba(236, 72, 153, 0.5)";
+        ctx.strokeStyle = "rgba(236, 72, 153, 0.7)";
         ctx.lineWidth = 2;
         ctx.setLineDash([8, 4]);
+        let firstPoint = true;
         effect.pinkReference.forEach((val, i) => {
           const x = getX(i, effect.pinkReference.length);
           const y = height - ((val + 100) / 100) * height;
-          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          if (firstPoint) {
+            ctx.moveTo(x, y);
+            firstPoint = false;
+          } else {
+            ctx.lineTo(x, y);
+          }
         });
         ctx.stroke();
         ctx.setLineDash([]);
+
+        // Label for pink reference line
+        const labelFreq = 500; // Label at 500Hz
+        const labelBin = Math.round(
+          (labelFreq * effect.pinkReference.length * 2) / 44100
+        );
+        if (labelBin < effect.pinkReference.length) {
+          const labelX = getX(labelBin, effect.pinkReference.length);
+          const labelY =
+            height - ((effect.pinkReference[labelBin] + 100) / 100) * height;
+          ctx.fillStyle = "rgba(236, 72, 153, 0.9)";
+          ctx.font = "bold 10px monospace";
+          ctx.textAlign = "left";
+          ctx.fillText("REF", labelX + 5, labelY - 5);
+        }
       }
 
       // Draw Max Captured Spectrum (solid purple/blue line)
@@ -291,14 +389,73 @@ export const PinkCeilingControls = ({ effect, trackId, engineRef }) => {
         ctx.lineWidth = 2;
         ctx.shadowBlur = 4;
         ctx.shadowColor = "rgba(139, 92, 246, 0.5)";
+        let firstPoint = true;
+        let maxY = -Infinity;
+        let maxX = 0;
         effect.maxSpectrum.forEach((val, i) => {
           if (val === -Infinity) return;
           const x = getX(i, effect.maxSpectrum.length);
           const y = height - ((val + 100) / 100) * height;
-          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          if (y < maxY || maxY === -Infinity) {
+            maxY = y;
+            maxX = x;
+          }
+          if (firstPoint) {
+            ctx.moveTo(x, y);
+            firstPoint = false;
+          } else {
+            ctx.lineTo(x, y);
+          }
         });
         ctx.stroke();
         ctx.shadowBlur = 0;
+
+        // Label for captured spectrum
+        if (maxY !== -Infinity) {
+          ctx.fillStyle = "#8b5cf6";
+          ctx.font = "bold 10px monospace";
+          ctx.textAlign = "center";
+          ctx.fillText("CAPTURED", maxX, maxY - 5);
+        }
+      }
+
+      // Draw Adjusted Spectrum (captured + output gain offset)
+      if (effect.maxSpectrum && effect.analysisComplete) {
+        const outputGainDb = effect.params.outputGain.getValue();
+        ctx.beginPath();
+        ctx.strokeStyle = "#10b981"; // green color
+        ctx.lineWidth = 2;
+        ctx.shadowBlur = 4;
+        ctx.shadowColor = "rgba(16, 185, 129, 0.5)";
+        let firstPoint = true;
+        let maxY = -Infinity;
+        let maxX = 0;
+        effect.maxSpectrum.forEach((val, i) => {
+          if (val === -Infinity) return;
+          const adjustedVal = val + outputGainDb;
+          const x = getX(i, effect.maxSpectrum.length);
+          const y = height - ((adjustedVal + 100) / 100) * height;
+          if (y < maxY || maxY === -Infinity) {
+            maxY = y;
+            maxX = x;
+          }
+          if (firstPoint) {
+            ctx.moveTo(x, y);
+            firstPoint = false;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        });
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // Label for adjusted spectrum
+        if (maxY !== -Infinity) {
+          ctx.fillStyle = "#10b981";
+          ctx.font = "bold 10px monospace";
+          ctx.textAlign = "center";
+          ctx.fillText("ADJUSTED", maxX, maxY - 5);
+        }
       }
 
       // Draw Live Spectrum (bright cyan, semi-transparent)
@@ -313,10 +470,16 @@ export const PinkCeilingControls = ({ effect, trackId, engineRef }) => {
         ctx.shadowColor = isAnalyzing
           ? "rgba(251, 113, 133, 0.3)"
           : "rgba(34, 211, 238, 0.3)";
+        let firstPoint = true;
         liveSpectrum.forEach((val, i) => {
           const x = getX(i, liveSpectrum.length);
           const y = height - ((val + 100) / 100) * height;
-          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          if (firstPoint) {
+            ctx.moveTo(x, y);
+            firstPoint = false;
+          } else {
+            ctx.lineTo(x, y);
+          }
         });
         ctx.stroke();
         ctx.shadowBlur = 0;
@@ -368,34 +531,19 @@ export const PinkCeilingControls = ({ effect, trackId, engineRef }) => {
           height={128}
           className="w-full h-full"
         />
-        <div className="absolute top-2 right-2 text-[9px] font-mono space-y-1">
-          <div className="flex items-center gap-1.5 bg-slate-900/80 px-2 py-0.5 rounded backdrop-blur-sm">
-            <div
-              className="w-3 h-0.5 bg-pink-500 opacity-50"
-              style={{ borderTop: "2px dashed" }}
-            ></div>
-            <span className="text-pink-400">Reference</span>
-          </div>
-          {effect.analysisComplete && (
-            <div className="flex items-center gap-1.5 bg-slate-900/80 px-2 py-0.5 rounded backdrop-blur-sm">
-              <div className="w-3 h-0.5 bg-purple-500"></div>
-              <span className="text-purple-400">Captured</span>
-            </div>
-          )}
-          <div className="flex items-center gap-1.5 bg-slate-900/80 px-2 py-0.5 rounded backdrop-blur-sm">
-            <div className="w-3 h-0.5 bg-cyan-400"></div>
-            <span className="text-cyan-400">Live</span>
-          </div>
-        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4">
         <div className="grid grid-cols-2 gap-3">
           <ParameterSlider param={effect.params.pinkLevel} label="Reference" />
+          <ParameterSlider param={effect.params.pinkSlope} label="Slope" />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
           <ParameterSlider
             param={effect.params.silenceThreshold}
             label="Gate"
           />
+          <ParameterSlider param={effect.params.fftSize} label="FFT Size" />
         </div>
         <div className="pt-3 border-t border-slate-800">
           <ParameterSlider
