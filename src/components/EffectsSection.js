@@ -4,11 +4,11 @@ import { EQControls } from "./effects/EQEffect";
 import { PinkCeilingControls } from "./effects/PinkCeilingEffect";
 
 const AVAILABLE_EFFECTS = [
-  { id: "reverb", name: "Reverb", color: "bg-blue-500" },
-  { id: "delay", name: "Delay", color: "bg-purple-500" },
-  { id: "chorus", name: "Chorus", color: "bg-green-500" },
-  { id: "distortion", name: "Distortion", color: "bg-red-500" },
-  { id: "compressor", name: "Compressor", color: "bg-yellow-500" },
+  // { id: "reverb", name: "Reverb", color: "bg-blue-500" },
+  // { id: "delay", name: "Delay", color: "bg-purple-500" },
+  // { id: "chorus", name: "Chorus", color: "bg-green-500" },
+  // { id: "distortion", name: "Distortion", color: "bg-red-500" },
+  // { id: "compressor", name: "Compressor", color: "bg-yellow-500" },
   { id: "eq", name: "EQ", color: "bg-pink-500" },
   { id: "pinkceil", name: "Pink Ceiling", color: "bg-fuchsia-500" },
 ];
