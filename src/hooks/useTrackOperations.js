@@ -70,38 +70,11 @@ export const useTrackOperations = (engineRef) => {
               effects: bus.channelStrip.audioFX.map((fx) => ({
                 name: fx.name,
                 enabled: fx.enabled,
-                bypass: fx.bypass,
               })),
             }
           : t
       )
     );
-  };
-
-  const handleBypassEffect = (busId, effectName) => {
-    const bus = engineRef.current.graph.buses.find((b) => b.id === busId);
-    if (!bus) return;
-
-    const effect = bus.channelStrip.getEffect(effectName);
-    if (effect) {
-      effect.setBypass(!effect.bypass);
-      bus.channelStrip.rebuildChain();
-
-      setTracks((prev) =>
-        prev.map((t) =>
-          t.id === busId
-            ? {
-                ...t,
-                effects: bus.channelStrip.audioFX.map((fx) => ({
-                  name: fx.name,
-                  enabled: fx.enabled,
-                  bypass: fx.bypass,
-                })),
-              }
-            : t
-        )
-      );
-    }
   };
 
   const handleAddEffect = (busId, effectType) => {
@@ -118,7 +91,6 @@ export const useTrackOperations = (engineRef) => {
               effects: bus.channelStrip.audioFX.map((fx) => ({
                 name: fx.name,
                 enabled: fx.enabled,
-                bypass: fx.bypass,
               })),
             }
           : t
@@ -147,7 +119,6 @@ export const useTrackOperations = (engineRef) => {
     handleFileUpload,
     handleVolumeChange,
     handleRemoveEffect,
-    handleBypassEffect,
     handleAddEffect,
     handleEffectParamChange,
   };

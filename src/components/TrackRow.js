@@ -8,10 +8,9 @@ export const TrackRow = ({
   onFileUpload,
   onVolumeChange,
   onRemoveEffect,
-  onBypassEffect,
   onAddEffect,
-  onEffectParamChange, // <-- Add this
-  engineRef, // <-- Add this
+  onEffectParamChange,
+  engineRef,
   waveformCanvasRef,
   currentTime,
   duration,
@@ -59,9 +58,8 @@ export const TrackRow = ({
         effects={track.effects}
         onAddEffect={onAddEffect}
         onRemoveEffect={onRemoveEffect}
-        onBypassEffect={onBypassEffect}
-        onEffectParamChange={onEffectParamChange} // <-- Add this
-        engineRef={engineRef} // <-- Add this (pass from App.js)
+        onEffectParamChange={onEffectParamChange}
+        engineRef={engineRef}
       />
       {/* Channel Strip - FX Chain */}
       <div className="w-64 border-r border-gray-700 bg-gray-900/50 p-2">
@@ -77,20 +75,11 @@ export const TrackRow = ({
                 track.effects.map((effect, index) => (
                   <div
                     key={`${effect.name}-${index}`}
-                    className={`bg-gray-800 rounded p-2 text-xs ${
-                      effect.bypass ? "opacity-50" : ""
-                    }`}
+                    className="bg-gray-800 rounded p-2 text-xs"
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-semibold">{effect.name}</span>
                       <div className="flex gap-1">
-                        <button
-                          onClick={() => onBypassEffect(track.id, effect.name)}
-                          className="px-1 py-0.5 bg-gray-700 hover:bg-gray-600 rounded"
-                          title={effect.bypass ? "Enable" : "Bypass"}
-                        >
-                          {effect.bypass ? "○" : "●"}
-                        </button>
                         <button
                           onClick={() => onRemoveEffect(track.id, effect.name)}
                           className="px-1 py-0.5 bg-red-700 hover:bg-red-600 rounded"

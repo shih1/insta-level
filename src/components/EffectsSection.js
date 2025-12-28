@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Plus, X, Power } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { EQControls } from "./effects/EQEffect";
 import { PinkCeilingControls } from "./effects/PinkCeilingEffect";
 import { CompressorControls } from "./effects/CompressorEffect";
@@ -23,7 +23,6 @@ export const EffectsSection = ({
   effects = [],
   onAddEffect,
   onRemoveEffect,
-  onBypassEffect,
   onEffectParamChange,
   engineRef,
 }) => {
@@ -144,7 +143,7 @@ export const EffectsSection = ({
                       AVAILABLE_EFFECTS.find(
                         (fx) => fx.id === effect.name.toLowerCase()
                       )?.color || "bg-gray-600"
-                    } ${effect.bypass ? "opacity-40" : "opacity-100"} ${
+                    } ${
                       isOpen ? "ring-2 ring-white" : ""
                     } flex flex-col items-center justify-center relative group cursor-pointer hover:ring-2 hover:ring-white`}
                   >
@@ -156,16 +155,6 @@ export const EffectsSection = ({
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          onBypassEffect(trackId, effect.name);
-                        }}
-                        className="w-5 h-5 bg-black bg-opacity-60 rounded flex items-center justify-center hover:bg-opacity-80"
-                        title={effect.bypass ? "Enable" : "Bypass"}
-                      >
-                        <Power size={12} className="text-white" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
                           onRemoveEffect(trackId, effect.name);
                         }}
                         className="w-5 h-5 bg-black bg-opacity-60 rounded flex items-center justify-center hover:bg-opacity-80"
@@ -174,12 +163,6 @@ export const EffectsSection = ({
                         <X size={12} className="text-white" />
                       </button>
                     </div>
-
-                    {effect.bypass && (
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="w-full h-0.5 bg-red-500 rotate-45"></div>
-                      </div>
-                    )}
                   </div>
                 </>
               ) : (
