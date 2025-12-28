@@ -30,7 +30,7 @@ export class PinkCeilingEffect {
         this.generatePinkReference();
       }),
       silenceThreshold: new AudioParameter("Gate", -60, -80, -20, "dB"),
-      pinkLevel: new AudioParameter("Ref Level", -18, -100, 0, "dB", () => {
+      pinkLevel: new AudioParameter("Ref Level", -36, -100, 0, "dB", () => {
         this.generatePinkReference();
       }),
       pinkSlope: new AudioParameter("Slope", -3, -6, 0, "dB/oct", () => {
