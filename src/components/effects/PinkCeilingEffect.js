@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState } from "react";
 import * as Tone from "tone";
 import { AudioParameter } from "./AudioParameter";
+import ParameterSlider from "./ParameterSlider";
 
 export class PinkCeilingEffect {
   constructor() {
@@ -8,405 +9,400 @@ export class PinkCeilingEffect {
     this.enabled = true;
     this.bypass = false;
 
-    // Create gain node for output
     this.outputGain = new Tone.Gain(1);
-
-    // FFT Analyser
     this.analyser = new Tone.Analyser("fft", 2048);
+    this.outputGain.connect(this.analyser);
 
-    // Connect analyser before gain
-    this.analyser.connect(this.outputGain);
+    this.input = this.outputGain;
+    this.output = this.analyser;
 
-    this.input = this.analyser;
-    this.output = this.outputGain;
-
-    // Analysis state
     this.isAnalyzing = false;
     this.analysisComplete = false;
     this.maxSpectrum = null;
     this.pinkReference = null;
     this.calculatedGain = 0;
 
-    // Create AudioParameters
     this.params = {
-      fftSize: new AudioParameter("FFT Size", 2048, 512, 8192, "", (value) => {
-        this.analyser.size = value;
+      fftSize: new AudioParameter("FFT Size", 2048, 512, 8192, "", (val) => {
+        this.analyser.size = val;
+        this.generatePinkReference();
       }),
-      silenceThreshold: new AudioParameter("Silence Gate", -60, -80, -20, "dB"),
-      pinkLevel: new AudioParameter("Pink Reference", -18, -30, -6, "dB"),
-      outputGain: new AudioParameter(
-        "Output Gain",
-        0,
-        -60,
-        12,
-        "dB",
-        (value) => {
-          this.outputGain.gain.value = Tone.dbToGain(value);
-        }
-      ),
+      silenceThreshold: new AudioParameter("Gate", -60, -80, -20, "dB"),
+      pinkLevel: new AudioParameter("Ref Level", -18, -40, 0, "dB", () => {
+        this.generatePinkReference();
+      }),
+      outputGain: new AudioParameter("Output", 0, -60, 12, "dB", (val) => {
+        this.outputGain.gain.rampTo(Tone.dbToGain(val), 0.1);
+      }),
     };
 
-    // Generate pink noise reference on creation
     this.generatePinkReference();
   }
 
   generatePinkReference() {
     const fftSize = this.params.fftSize.getValue();
+    const refDb = this.params.pinkLevel.getValue();
     this.pinkReference = new Float32Array(fftSize / 2);
 
-    // Pink noise has 1/f characteristic (-3dB per octave)
     for (let i = 0; i < this.pinkReference.length; i++) {
       const freq = (i * Tone.getContext().sampleRate) / fftSize;
       if (freq > 0) {
-        // Pink noise magnitude proportional to 1/sqrt(f)
-        this.pinkReference[i] = 1.0 / Math.sqrt(freq);
+        // Pink noise falls off at -3dB per octave (1/sqrt(freq))
+        // Store in dB for direct comparison with FFT output
+        const pinkSlope = -10 * Math.log10(freq / 1000); // -3dB per octave relative to 1kHz
+        this.pinkReference[i] = refDb + pinkSlope;
       } else {
-        this.pinkReference[i] = 1.0;
+        this.pinkReference[i] = refDb;
       }
-    }
-
-    // Normalize to reference level
-    const refLevel = this.params.pinkLevel.getValue();
-    const refLinear = Tone.dbToGain(refLevel);
-    for (let i = 0; i < this.pinkReference.length; i++) {
-      this.pinkReference[i] *= refLinear;
     }
   }
 
   startAnalysis() {
     this.isAnalyzing = true;
     this.analysisComplete = false;
-    const fftSize = this.params.fftSize.getValue();
-    this.maxSpectrum = new Float32Array(fftSize / 2).fill(-Infinity);
+    this.maxSpectrum = new Float32Array(
+      this.params.fftSize.getValue() / 2
+    ).fill(-Infinity);
   }
 
-  processAnalysisFrame() {
-    if (!this.isAnalyzing) return;
+  async analyzeFullBuffer(audioBuffer, onProgress) {
+    if (!audioBuffer) return;
+    this.startAnalysis();
 
-    const freqData = this.analyser.getValue();
-    const silenceThreshold = this.params.silenceThreshold.getValue();
+    const fftSize = this.params.fftSize.getValue();
+    const channelData = audioBuffer.getChannelData(0);
+    const hopSize = fftSize / 2; // 50% overlap
+    const totalChunks = Math.floor((channelData.length - fftSize) / hopSize);
+    let chunkCount = 0;
 
-    // Check if frame is above silence threshold
-    let rms = 0;
-    for (let i = 0; i < freqData.length; i++) {
-      rms += Math.pow(10, freqData[i] / 20);
+    // Perform manual FFT analysis
+    for (let i = 0; i <= channelData.length - fftSize; i += hopSize) {
+      const chunk = channelData.slice(i, i + fftSize);
+
+      // Apply Hann window to reduce spectral leakage
+      const windowed = new Float32Array(fftSize);
+      for (let j = 0; j < fftSize; j++) {
+        const window = 0.5 * (1 - Math.cos((2 * Math.PI * j) / (fftSize - 1)));
+        windowed[j] = chunk[j] * window;
+      }
+
+      // Compute FFT manually using the Web Audio API approach
+      const spectrum = this.computeFFT(windowed);
+      this.updateMaxSpectrum(spectrum);
+
+      chunkCount++;
+      if (onProgress && chunkCount % 50 === 0) {
+        onProgress(Math.round((chunkCount / totalChunks) * 100));
+        await new Promise((r) => setTimeout(r, 0));
+      }
     }
-    rms = 20 * Math.log10(Math.sqrt(rms / freqData.length));
 
-    if (rms < silenceThreshold) return;
+    this.completeAnalysis();
+    if (onProgress) onProgress(100);
+  }
 
-    // Update max spectrum (take maximum per bin)
+  computeFFT(timeData) {
+    const fftSize = timeData.length;
+    const spectrum = new Float32Array(fftSize / 2);
+
+    // Simple DFT for magnitude spectrum
+    for (let k = 0; k < fftSize / 2; k++) {
+      let real = 0;
+      let imag = 0;
+
+      for (let n = 0; n < fftSize; n++) {
+        const angle = (2 * Math.PI * k * n) / fftSize;
+        real += timeData[n] * Math.cos(angle);
+        imag -= timeData[n] * Math.sin(angle);
+      }
+
+      // Magnitude in linear scale
+      const magnitude = Math.sqrt(real * real + imag * imag) / fftSize;
+
+      // Convert to dB (with floor to avoid log(0))
+      spectrum[k] = magnitude > 0 ? 20 * Math.log10(magnitude + 1e-10) : -100;
+    }
+
+    return spectrum;
+  }
+
+  updateMaxSpectrum(freqData) {
+    const silenceThresholdDb = this.params.silenceThreshold.getValue();
+
     for (let i = 0; i < freqData.length; i++) {
-      if (freqData[i] > this.maxSpectrum[i]) {
-        this.maxSpectrum[i] = freqData[i];
+      // Only update if signal is above silence threshold
+      if (freqData[i] > silenceThresholdDb) {
+        if (freqData[i] > this.maxSpectrum[i]) {
+          this.maxSpectrum[i] = freqData[i];
+        }
       }
     }
   }
 
   completeAnalysis() {
-    if (!this.maxSpectrum || !this.pinkReference) return;
+    if (!this.maxSpectrum) return;
 
-    // Calculate gain needed so no bin exceeds pink reference
-    let minGainOffset = Infinity;
+    const fftSize = this.params.fftSize.getValue();
+    const sampleRate = Tone.getContext().sampleRate;
 
-    for (let i = 0; i < this.maxSpectrum.length; i++) {
-      const measured = Tone.dbToGain(this.maxSpectrum[i]);
-      const reference = this.pinkReference[i];
+    // Start at 20Hz (skip DC offset and sub-bass)
+    const startBin = Math.ceil((20 * fftSize) / sampleRate);
+    // End at 16kHz (avoid noise in high frequencies)
+    const endBin = Math.min(
+      Math.floor((16000 * fftSize) / sampleRate),
+      this.maxSpectrum.length
+    );
 
-      if (measured > 0) {
-        const gainNeeded = reference / measured;
-        const gainDb = 20 * Math.log10(gainNeeded);
-        minGainOffset = Math.min(minGainOffset, gainDb);
-      }
+    let sumGainOffset = 0;
+    let validBins = 0;
+
+    for (let i = startBin; i < endBin; i++) {
+      const measuredDb = this.maxSpectrum[i];
+      const referenceDb = this.pinkReference[i];
+
+      // Skip bins that never exceeded silence threshold
+      if (measuredDb === -Infinity) continue;
+
+      // Calculate gain needed to match reference (in dB)
+      const gainOffsetDb = referenceDb - measuredDb;
+
+      sumGainOffset += gainOffsetDb;
+      validBins++;
     }
 
-    this.calculatedGain = minGainOffset;
-    this.params.outputGain.setValue(minGainOffset);
+    if (validBins > 0) {
+      // Use average offset across all valid bins
+      this.calculatedGain = sumGainOffset / validBins;
+
+      // Clamp to parameter limits
+      const minGain = this.params.outputGain.min;
+      const maxGain = this.params.outputGain.max;
+      this.calculatedGain = Math.max(
+        minGain,
+        Math.min(maxGain, this.calculatedGain)
+      );
+
+      this.params.outputGain.setValue(this.calculatedGain);
+    }
+
     this.isAnalyzing = false;
     this.analysisComplete = true;
   }
 
-  getParameter(name) {
-    return this.params[name];
+  process(buffer) {
+    // Audio processing is handled by Tone.js signal chain
+    // This method exists to satisfy the AudioFX interface
+    // The actual processing happens through the connected Tone nodes
   }
 
-  setParameter(name, value) {
-    if (this.params[name]) {
-      this.params[name].setValue(value);
-    }
-  }
-
-  setBypass(bypass) {
-    this.bypass = bypass;
-  }
-
-  getFrequencyData() {
+  getLiveSpectrum() {
+    // Get current FFT data from the analyser
     return this.analyser.getValue();
   }
 
-  getMaxSpectrum() {
-    return this.maxSpectrum;
-  }
-
-  getPinkReference() {
-    return this.pinkReference;
-  }
-
   getToneNodes() {
-    return [this.analyser, this.outputGain];
+    return [this.outputGain, this.analyser];
   }
-
-  process(buffer) {
-    if (this.isAnalyzing) {
-      this.processAnalysisFrame();
-    }
-  }
-
   dispose() {
     this.analyser.dispose();
     this.outputGain.dispose();
   }
 }
 
-// UI Component
-export const PinkCeilingControls = ({ effect }) => {
+export const PinkCeilingControls = ({ effect, trackId, engineRef }) => {
   const canvasRef = useRef(null);
-  const animationRef = useRef(null);
-  const [paramValues, setParamValues] = useState({});
+  const [progress, setProgress] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  // Subscribe to parameter changes
-  useEffect(() => {
-    if (!effect) return;
-
-    const listeners = {};
-
-    Object.entries(effect.params).forEach(([key, param]) => {
-      const listener = (value) => {
-        setParamValues((prev) => ({ ...prev, [key]: value }));
-      };
-      param.addListener(listener);
-      listeners[key] = listener;
-      setParamValues((prev) => ({ ...prev, [key]: param.getValue() }));
-    });
-
-    return () => {
-      Object.entries(effect.params).forEach(([key, param]) => {
-        if (listeners[key]) {
-          param.removeListener(listeners[key]);
-        }
-      });
-    };
-  }, [effect]);
-
-  const handleChange = (paramName, value) => {
-    effect.setParameter(paramName, parseFloat(value));
-  };
-
-  const handleAnalyze = () => {
-    effect.startAnalysis();
+  const handleFullCapture = async () => {
+    if (!engineRef?.current) return;
     setIsAnalyzing(true);
+    setProgress(0);
 
-    // Run analysis for 10 seconds or until stopped
-    setTimeout(() => {
-      effect.completeAnalysis();
-      setIsAnalyzing(false);
-    }, 10000);
-  };
+    // FIXED PATH: b.tonePlayer.buffer based on AudioBus.js
+    const bus = engineRef.current.graph.buses.find((b) => b.id === trackId);
+    const buffer = bus?.tonePlayer?.buffer;
 
-  const handleStop = () => {
-    effect.completeAnalysis();
+    if (buffer && buffer.loaded) {
+      await effect.analyzeFullBuffer(buffer.get(), (p) => setProgress(p));
+    } else {
+      alert("Audio file not found or not yet loaded on this bus.");
+    }
     setIsAnalyzing(false);
   };
 
-  // Draw spectrum
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !effect) return;
-
+    if (!canvas) return;
     const ctx = canvas.getContext("2d");
-    const width = canvas.width;
-    const height = canvas.height;
 
     const draw = () => {
-      ctx.fillStyle = "#1a1a2e";
+      const { width, height } = canvas;
+      ctx.fillStyle = "#0f172a";
       ctx.fillRect(0, 0, width, height);
 
-      // Draw pink reference curve
-      const pinkRef = effect.getPinkReference();
-      if (pinkRef) {
-        ctx.strokeStyle = "#ec4899";
-        ctx.lineWidth = 2;
-        ctx.globalAlpha = 0.5;
+      const getX = (i, len) => {
+        const freq = (i / len) * 22050;
+        return (
+          (Math.log10(Math.max(20, freq) / 20) / Math.log10(22050 / 20)) * width
+        );
+      };
+
+      // Draw grid lines
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
+      ctx.lineWidth = 1;
+      [100, 1000, 10000].forEach((f) => {
+        const x = (Math.log10(f / 20) / Math.log10(22050 / 20)) * width;
         ctx.beginPath();
-
-        for (let i = 0; i < width; i++) {
-          const binIndex = Math.floor((i / width) * pinkRef.length);
-          const value = pinkRef[binIndex];
-          const db = value > 0 ? 20 * Math.log10(value) : -100;
-          const normalized = (db + 100) / 100;
-          const y = height - normalized * height;
-
-          if (i === 0) ctx.moveTo(i, y);
-          else ctx.lineTo(i, y);
-        }
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
         ctx.stroke();
-        ctx.globalAlpha = 1;
+      });
+
+      // Draw 0dB line
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+      ctx.setLineDash([2, 2]);
+      const zeroDbY = height - ((0 + 100) / 100) * height;
+      ctx.beginPath();
+      ctx.moveTo(0, zeroDbY);
+      ctx.lineTo(width, zeroDbY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Draw Pink Reference (dashed pink line)
+      if (effect.pinkReference) {
+        ctx.beginPath();
+        ctx.strokeStyle = "rgba(236, 72, 153, 0.5)";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([8, 4]);
+        effect.pinkReference.forEach((val, i) => {
+          const x = getX(i, effect.pinkReference.length);
+          const y = height - ((val + 100) / 100) * height;
+          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
 
-      // Draw measured max spectrum
-      const maxSpec = effect.getMaxSpectrum();
-      if (maxSpec) {
+      // Draw Max Captured Spectrum (solid purple/blue line)
+      if (effect.maxSpectrum && effect.analysisComplete) {
+        ctx.beginPath();
         ctx.strokeStyle = "#8b5cf6";
         ctx.lineWidth = 2;
-        ctx.beginPath();
-
-        for (let i = 0; i < width; i++) {
-          const binIndex = Math.floor((i / width) * maxSpec.length);
-          const value = maxSpec[binIndex];
-          const normalized = (value + 100) / 100;
-          const y = height - normalized * height;
-
-          if (i === 0) ctx.moveTo(i, y);
-          else ctx.lineTo(i, y);
-        }
+        ctx.shadowBlur = 4;
+        ctx.shadowColor = "rgba(139, 92, 246, 0.5)";
+        effect.maxSpectrum.forEach((val, i) => {
+          if (val === -Infinity) return;
+          const x = getX(i, effect.maxSpectrum.length);
+          const y = height - ((val + 100) / 100) * height;
+          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        });
         ctx.stroke();
+        ctx.shadowBlur = 0;
       }
 
-      animationRef.current = requestAnimationFrame(draw);
-    };
-
-    draw();
-
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
+      // Draw Live Spectrum (bright cyan, semi-transparent)
+      const liveSpectrum = effect.getLiveSpectrum();
+      if (liveSpectrum && liveSpectrum.length > 0) {
+        ctx.beginPath();
+        ctx.strokeStyle = isAnalyzing
+          ? "rgba(251, 113, 133, 0.6)"
+          : "rgba(34, 211, 238, 0.7)";
+        ctx.lineWidth = 2;
+        ctx.shadowBlur = 6;
+        ctx.shadowColor = isAnalyzing
+          ? "rgba(251, 113, 133, 0.3)"
+          : "rgba(34, 211, 238, 0.3)";
+        liveSpectrum.forEach((val, i) => {
+          const x = getX(i, liveSpectrum.length);
+          const y = height - ((val + 100) / 100) * height;
+          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        ctx.shadowBlur = 0;
       }
+
+      requestAnimationFrame(draw);
     };
-  }, [effect, paramValues]);
+
+    const animId = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(animId);
+  }, [effect, isAnalyzing]);
 
   return (
-    <div className="bg-gray-800 rounded-lg p-4 space-y-4">
-      <div className="text-sm font-bold text-pink-400">PINK CEILING</div>
-
-      {/* Spectrum Visualization */}
-      <div className="bg-gray-900 rounded-lg overflow-hidden">
-        <canvas ref={canvasRef} width={300} height={120} className="w-full" />
-        <div className="p-2 text-xs text-gray-400">
-          <span className="text-pink-400">■</span> Pink Reference
-          <span className="ml-3 text-purple-400">■</span> Measured Max
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-6 shadow-2xl w-80">
+      <div className="flex justify-between items-center">
+        <div>
+          <h3 className="text-[10px] font-black text-pink-500 uppercase tracking-widest">
+            Ceiling
+          </h3>
+          <div className="text-lg font-bold text-white leading-none tracking-tight">
+            Capture
+          </div>
         </div>
-      </div>
-
-      {/* Analysis Controls */}
-      <div className="flex gap-2">
         <button
-          onClick={handleAnalyze}
+          onClick={handleFullCapture}
           disabled={isAnalyzing}
-          className="flex-1 px-3 py-2 bg-pink-600 hover:bg-pink-700 disabled:bg-gray-700 disabled:text-gray-500 rounded text-xs font-semibold transition-colors"
+          className={`relative overflow-hidden px-4 py-2 rounded-full text-[10px] font-black uppercase transition-all ${
+            isAnalyzing
+              ? "bg-slate-800 text-pink-400"
+              : "bg-pink-600 text-white hover:bg-pink-500 active:scale-95"
+          }`}
         >
-          {isAnalyzing ? "Analyzing..." : "Analyze"}
+          <span className="relative z-10">
+            {isAnalyzing ? `Scanning ${progress}%` : "Analyze File"}
+          </span>
+          {isAnalyzing && (
+            <div
+              className="absolute left-0 top-0 h-full bg-pink-500/20 transition-all duration-300"
+              style={{ width: `${progress}%` }}
+            />
+          )}
         </button>
-        <button
-          onClick={handleStop}
-          disabled={!isAnalyzing}
-          className="px-3 py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-600 rounded text-xs font-semibold transition-colors"
-        >
-          Stop
-        </button>
       </div>
 
-      {effect.analysisComplete && (
-        <div className="bg-green-900/30 border border-green-700 rounded p-2 text-xs text-green-400">
-          Analysis complete! Calculated gain: {effect.calculatedGain.toFixed(1)}{" "}
-          dB
-        </div>
-      )}
-
-      {/* FFT Size */}
-      <div className="space-y-2">
-        <div className="flex justify-between items-center">
-          <label className="text-xs text-gray-400">FFT Window Size</label>
-          <span className="text-xs text-white font-mono">
-            {paramValues.fftSize}
-          </span>
-        </div>
-        <select
-          value={paramValues.fftSize || 2048}
-          onChange={(e) => handleChange("fftSize", e.target.value)}
-          className="w-full bg-gray-700 text-white rounded px-2 py-1 text-xs"
-        >
-          <option value="512">512</option>
-          <option value="1024">1024</option>
-          <option value="2048">2048</option>
-          <option value="4096">4096</option>
-          <option value="8192">8192</option>
-        </select>
-      </div>
-
-      {/* Silence Threshold */}
-      <div className="space-y-2">
-        <div className="flex justify-between items-center">
-          <label className="text-xs text-gray-400">Silence Gate</label>
-          <span className="text-xs text-white font-mono">
-            {effect.params.silenceThreshold?.getDisplayValue
-              ? effect.params.silenceThreshold.getDisplayValue()
-              : `${(paramValues.silenceThreshold || -60).toFixed(1)} dB`}
-          </span>
-        </div>
-        <input
-          type="range"
-          min="-80"
-          max="-20"
-          step="1"
-          value={paramValues.silenceThreshold || -60}
-          onChange={(e) => handleChange("silenceThreshold", e.target.value)}
-          className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-pink-500"
+      <div className="bg-slate-950 rounded-lg overflow-hidden border border-white/5 h-32 shadow-inner relative">
+        <canvas
+          ref={canvasRef}
+          width={400}
+          height={128}
+          className="w-full h-full"
         />
+        <div className="absolute top-2 right-2 text-[9px] font-mono space-y-1">
+          <div className="flex items-center gap-1.5 bg-slate-900/80 px-2 py-0.5 rounded backdrop-blur-sm">
+            <div
+              className="w-3 h-0.5 bg-pink-500 opacity-50"
+              style={{ borderTop: "2px dashed" }}
+            ></div>
+            <span className="text-pink-400">Reference</span>
+          </div>
+          {effect.analysisComplete && (
+            <div className="flex items-center gap-1.5 bg-slate-900/80 px-2 py-0.5 rounded backdrop-blur-sm">
+              <div className="w-3 h-0.5 bg-purple-500"></div>
+              <span className="text-purple-400">Captured</span>
+            </div>
+          )}
+          <div className="flex items-center gap-1.5 bg-slate-900/80 px-2 py-0.5 rounded backdrop-blur-sm">
+            <div className="w-3 h-0.5 bg-cyan-400"></div>
+            <span className="text-cyan-400">Live</span>
+          </div>
+        </div>
       </div>
 
-      {/* Pink Reference Level */}
-      <div className="space-y-2">
-        <div className="flex justify-between items-center">
-          <label className="text-xs text-gray-400">Pink Reference Level</label>
-          <span className="text-xs text-white font-mono">
-            {effect.params.pinkLevel?.getDisplayValue
-              ? effect.params.pinkLevel.getDisplayValue()
-              : `${(paramValues.pinkLevel || -18).toFixed(1)} dB`}
-          </span>
+      <div className="grid grid-cols-1 gap-4">
+        <div className="grid grid-cols-2 gap-3">
+          <ParameterSlider param={effect.params.pinkLevel} label="Reference" />
+          <ParameterSlider
+            param={effect.params.silenceThreshold}
+            label="Gate"
+          />
         </div>
-        <input
-          type="range"
-          min="-30"
-          max="-6"
-          step="1"
-          value={paramValues.pinkLevel || -18}
-          onChange={(e) => handleChange("pinkLevel", e.target.value)}
-          className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-pink-500"
-        />
-      </div>
-
-      {/* Output Gain */}
-      <div className="space-y-2 pt-3 border-t border-gray-700">
-        <div className="flex justify-between items-center">
-          <label className="text-xs text-gray-400">Output Gain</label>
-          <span className="text-xs text-white font-mono">
-            {effect.params.outputGain?.getDisplayValue
-              ? effect.params.outputGain.getDisplayValue()
-              : `${paramValues.outputGain > 0 ? "+" : ""}${(
-                  paramValues.outputGain || 0
-                ).toFixed(1)} dB`}
-          </span>
+        <div className="pt-3 border-t border-slate-800">
+          <ParameterSlider
+            param={effect.params.outputGain}
+            label="Target Offset"
+          />
         </div>
-        <input
-          type="range"
-          min="-60"
-          max="12"
-          step="0.5"
-          value={paramValues.outputGain || 0}
-          onChange={(e) => handleChange("outputGain", e.target.value)}
-          className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-pink-500"
-        />
       </div>
     </div>
   );

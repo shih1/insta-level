@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Plus, X, Power } from "lucide-react";
 import { EQControls } from "./effects/EQEffect";
+import { PinkCeilingControls } from "./effects/PinkCeilingEffect";
 
 const AVAILABLE_EFFECTS = [
   { id: "reverb", name: "Reverb", color: "bg-blue-500" },
@@ -274,6 +275,16 @@ export const EffectsSection = ({
                     }
                   />
                 </div>
+              </div>
+            ) : effectName === "Pink Ceiling" && engineRef?.current ? (
+              <div className="w-80">
+                <PinkCeilingControls
+                  effect={engineRef.current.graph.buses
+                    .find((b) => b.id === trackId)
+                    ?.channelStrip.getEffect("Pink Ceiling")}
+                  trackId={trackId}
+                  engineRef={engineRef}
+                />
               </div>
             ) : (
               <div className="w-64 max-h-96 overflow-y-auto">

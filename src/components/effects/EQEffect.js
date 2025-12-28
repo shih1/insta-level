@@ -75,6 +75,12 @@ export class EQEffect {
     };
   }
 
+  process(buffer) {
+    // Audio processing is handled by Tone.js signal chain
+    // This method exists to satisfy the AudioFX interface
+    // The actual processing happens through the connected Tone nodes
+  }
+
   getToneNodes() {
     return [this.highPass, this.outputGain];
   }
