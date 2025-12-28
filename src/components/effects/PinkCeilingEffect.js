@@ -30,10 +30,10 @@ export class PinkCeilingEffect {
         this.generatePinkReference();
       }),
       silenceThreshold: new AudioParameter("Gate", -60, -80, -20, "dB"),
-      pinkLevel: new AudioParameter("Ref Level", -18, -60, 0, "dB", () => {
+      pinkLevel: new AudioParameter("Ref Level", -18, -100, 0, "dB", () => {
         this.generatePinkReference();
       }),
-      pinkSlope: new AudioParameter("Slope", -3, -18, 0, "dB/oct", () => {
+      pinkSlope: new AudioParameter("Slope", -3, -6, 0, "dB/oct", () => {
         this.generatePinkReference();
       }),
       outputGain: new AudioParameter("Output", 0, -60, 12, "dB", (val) => {
@@ -209,8 +209,7 @@ export class PinkCeilingEffect {
       this.maxSpectrum.length
     );
 
-    let sumGainOffset = 0;
-    let validBins = 0;
+    let minGainOffset = Infinity;
 
     for (let i = startBin; i < endBin; i++) {
       const measuredDb = this.maxSpectrum[i];
@@ -222,13 +221,14 @@ export class PinkCeilingEffect {
       // Calculate gain needed to match reference (in dB)
       const gainOffsetDb = referenceDb - measuredDb;
 
-      sumGainOffset += gainOffsetDb;
-      validBins++;
+      // Use the MINIMUM gain needed (peak matching - prevents clipping)
+      if (gainOffsetDb < minGainOffset) {
+        minGainOffset = gainOffsetDb;
+      }
     }
 
-    if (validBins > 0) {
-      // Use average offset across all valid bins
-      this.calculatedGain = sumGainOffset / validBins;
+    if (minGainOffset !== Infinity) {
+      this.calculatedGain = minGainOffset;
 
       // Clamp to parameter limits
       const minGain = this.params.outputGain.min;
