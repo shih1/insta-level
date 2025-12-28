@@ -36,7 +36,7 @@ export class PinkCeilingEffect {
       pinkSlope: new AudioParameter("Slope", -3, -6, 0, "dB/oct", () => {
         this.generatePinkReference();
       }),
-      outputGain: new AudioParameter("Output", 0, -60, 12, "dB", (val) => {
+      outputGain: new AudioParameter("Output", 0, -60, 36, "dB", (val) => {
         this.outputGain.gain.rampTo(Tone.dbToGain(val), 0.1);
       }),
     };
