@@ -114,9 +114,7 @@ export const EffectsSection = ({
   };
 
   const usedEffects = effects.map((e) => e.name.toLowerCase());
-  const availableToAdd = AVAILABLE_EFFECTS.filter(
-    (fx) => !usedEffects.includes(fx.id)
-  );
+  const availableToAdd = AVAILABLE_EFFECTS;
 
   return (
     <div className="mt-2 space-y-2">

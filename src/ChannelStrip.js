@@ -28,7 +28,6 @@ export class ChannelStrip {
       case "pinkceil":
         effect = new PinkCeilingEffect();
         break;
-        return;
       // ... other effects
       default:
         console.warn(`Unknown effect type: ${effectType}`);
@@ -59,11 +58,8 @@ export class ChannelStrip {
 
     for (const effect of this.audioFX) {
       if (effect.enabled && !effect.bypass) {
-        const nodes = effect.getToneNodes();
-        for (const node of nodes) {
-          currentNode.connect(node);
-          currentNode = node;
-        }
+        currentNode.connect(effect.input); // Connect to effect input
+        currentNode = effect.output; // Get effect output
       }
     }
 
