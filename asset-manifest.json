@@ -1,13 +1,13 @@
 {
   "files": {
-    "main.css": "/stem-leveler/static/css/main.68142e9f.css",
-    "main.js": "/stem-leveler/static/js/main.2d0f5f36.js",
+    "main.css": "/stem-leveler/static/css/main.2597c153.css",
+    "main.js": "/stem-leveler/static/js/main.225096e3.js",
     "index.html": "/stem-leveler/index.html",
-    "main.68142e9f.css.map": "/stem-leveler/static/css/main.68142e9f.css.map",
-    "main.2d0f5f36.js.map": "/stem-leveler/static/js/main.2d0f5f36.js.map"
+    "main.2597c153.css.map": "/stem-leveler/static/css/main.2597c153.css.map",
+    "main.225096e3.js.map": "/stem-leveler/static/js/main.225096e3.js.map"
   },
   "entrypoints": [
-    "static/css/main.68142e9f.css",
-    "static/js/main.2d0f5f36.js"
+    "static/css/main.2597c153.css",
+    "static/js/main.225096e3.js"
   ]
 }
