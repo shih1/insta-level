@@ -1,6 +1,7 @@
 import * as Tone from "tone";
 import { EQEffect } from "./components/effects/EQEffect";
 import { PinkCeilingEffect } from "./components/effects/PinkCeilingEffect";
+import { CompressorEffect } from "./components/effects/CompressorEffect";
 
 export class ChannelStrip {
   constructor() {
@@ -28,7 +29,9 @@ export class ChannelStrip {
       case "pinkceil":
         effect = new PinkCeilingEffect();
         break;
-      // ... other effects
+      case "compressor":
+        effect = new CompressorEffect();
+        break;
       default:
         console.warn(`Unknown effect type: ${effectType}`);
         return;

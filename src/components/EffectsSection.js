@@ -2,13 +2,13 @@ import React, { useState, useRef, useEffect } from "react";
 import { Plus, X, Power } from "lucide-react";
 import { EQControls } from "./effects/EQEffect";
 import { PinkCeilingControls } from "./effects/PinkCeilingEffect";
-
+import { CompressorControls } from "./effects/CompressorEffect";
 const AVAILABLE_EFFECTS = [
   // { id: "reverb", name: "Reverb", color: "bg-blue-500" },
   // { id: "delay", name: "Delay", color: "bg-purple-500" },
   // { id: "chorus", name: "Chorus", color: "bg-green-500" },
   // { id: "distortion", name: "Distortion", color: "bg-red-500" },
-  // { id: "compressor", name: "Compressor", color: "bg-yellow-500" },
+  { id: "compressor", name: "Compressor", color: "bg-yellow-500" },
   { id: "eq", name: "EQ", color: "bg-pink-500" },
   { id: "pinkceil", name: "Pink Ceiling", color: "bg-fuchsia-500" },
 ];
@@ -283,6 +283,31 @@ export const EffectsSection = ({
                   trackId={trackId}
                   engineRef={engineRef}
                 />
+              </div>
+            ) : effectName === "Compressor" && engineRef?.current ? (
+              <div className="w-80 max-h-96 overflow-y-auto">
+                <div className="bg-gray-900 rounded-lg shadow-2xl p-4 border border-gray-700">
+                  <div className="flex justify-between items-center mb-2">
+                    <h3 className="text-sm font-bold text-white">
+                      Compressor Controls
+                    </h3>
+                    <button
+                      onClick={() => {
+                        const [tId, name, index] = key.split("-");
+                        toggleEffectPanel(name, parseInt(index));
+                      }}
+                      className="text-gray-400 hover:text-white"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+
+                  <CompressorControls
+                    effect={engineRef.current.graph.buses
+                      .find((b) => b.id === trackId)
+                      ?.channelStrip.getEffect("Compressor")}
+                  />
+                </div>
               </div>
             ) : (
               <div className="w-64 max-h-96 overflow-y-auto">
