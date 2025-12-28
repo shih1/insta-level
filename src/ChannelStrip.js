@@ -2,6 +2,10 @@ import * as Tone from "tone";
 import { EQEffect } from "./components/effects/EQEffect";
 import { PinkCeilingEffect } from "./components/effects/PinkCeilingEffect";
 import { CompressorEffect } from "./components/effects/CompressorEffect";
+import { ReverbEffect } from "./components/effects/ReverbEffect";
+import { DelayEffect } from "./components/effects/DelayEffect";
+import { ChorusEffect } from "./components/effects/ChorusEffect";
+import { DistortionEffect } from "./components/effects/DistortionEffect";
 
 export class ChannelStrip {
   constructor() {
@@ -19,18 +23,23 @@ export class ChannelStrip {
       case "eq":
         effect = new EQEffect();
         break;
-      case "reverb":
-        // TODO: implement
-        console.warn("Reverb not implemented yet");
-        return;
-      case "delay":
-        // TODO: implement
-        console.warn("Delay not implemented yet");
       case "pinkceil":
         effect = new PinkCeilingEffect();
         break;
       case "compressor":
         effect = new CompressorEffect();
+        break;
+      case "reverb":
+        effect = new ReverbEffect();
+        break;
+      case "delay":
+        effect = new DelayEffect();
+        break;
+      case "chorus":
+        effect = new ChorusEffect();
+        break;
+      case "distortion":
+        effect = new DistortionEffect();
         break;
       default:
         console.warn(`Unknown effect type: ${effectType}`);

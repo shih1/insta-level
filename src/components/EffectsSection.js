@@ -3,11 +3,16 @@ import { Plus, X, Power } from "lucide-react";
 import { EQControls } from "./effects/EQEffect";
 import { PinkCeilingControls } from "./effects/PinkCeilingEffect";
 import { CompressorControls } from "./effects/CompressorEffect";
+import { ReverbControls } from "./effects/ReverbEffect";
+import { DelayControls } from "./effects/DelayEffect";
+import { ChorusControls } from "./effects/ChorusEffect";
+import { DistortionControls } from "./effects/DistortionEffect";
+
 const AVAILABLE_EFFECTS = [
-  // { id: "reverb", name: "Reverb", color: "bg-blue-500" },
-  // { id: "delay", name: "Delay", color: "bg-purple-500" },
-  // { id: "chorus", name: "Chorus", color: "bg-green-500" },
-  // { id: "distortion", name: "Distortion", color: "bg-red-500" },
+  { id: "reverb", name: "Reverb", color: "bg-blue-500" },
+  { id: "delay", name: "Delay", color: "bg-purple-500" },
+  { id: "chorus", name: "Chorus", color: "bg-green-500" },
+  { id: "distortion", name: "Distortion", color: "bg-red-500" },
   { id: "compressor", name: "Compressor", color: "bg-yellow-500" },
   { id: "eq", name: "EQ", color: "bg-pink-500" },
   { id: "pinkceil", name: "Pink Ceiling", color: "bg-fuchsia-500" },
@@ -113,7 +118,6 @@ export const EffectsSection = ({
     }
   };
 
-  const usedEffects = effects.map((e) => e.name.toLowerCase());
   const availableToAdd = AVAILABLE_EFFECTS;
 
   return (
@@ -306,6 +310,106 @@ export const EffectsSection = ({
                     effect={engineRef.current.graph.buses
                       .find((b) => b.id === trackId)
                       ?.channelStrip.getEffect("Compressor")}
+                  />
+                </div>
+              </div>
+            ) : effectName === "Reverb" && engineRef?.current ? (
+              <div className="w-80 max-h-96 overflow-y-auto">
+                <div className="bg-gray-900 rounded-lg shadow-2xl p-4 border border-gray-700">
+                  <div className="flex justify-between items-center mb-2">
+                    <h3 className="text-sm font-bold text-white">
+                      Reverb Controls
+                    </h3>
+                    <button
+                      onClick={() => {
+                        const [tId, name, index] = key.split("-");
+                        toggleEffectPanel(name, parseInt(index));
+                      }}
+                      className="text-gray-400 hover:text-white"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+
+                  <ReverbControls
+                    effect={engineRef.current.graph.buses
+                      .find((b) => b.id === trackId)
+                      ?.channelStrip.getEffect("Reverb")}
+                  />
+                </div>
+              </div>
+            ) : effectName === "Delay" && engineRef?.current ? (
+              <div className="w-80 max-h-96 overflow-y-auto">
+                <div className="bg-gray-900 rounded-lg shadow-2xl p-4 border border-gray-700">
+                  <div className="flex justify-between items-center mb-2">
+                    <h3 className="text-sm font-bold text-white">
+                      Delay Controls
+                    </h3>
+                    <button
+                      onClick={() => {
+                        const [tId, name, index] = key.split("-");
+                        toggleEffectPanel(name, parseInt(index));
+                      }}
+                      className="text-gray-400 hover:text-white"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+
+                  <DelayControls
+                    effect={engineRef.current.graph.buses
+                      .find((b) => b.id === trackId)
+                      ?.channelStrip.getEffect("Delay")}
+                  />
+                </div>
+              </div>
+            ) : effectName === "Chorus" && engineRef?.current ? (
+              <div className="w-80 max-h-96 overflow-y-auto">
+                <div className="bg-gray-900 rounded-lg shadow-2xl p-4 border border-gray-700">
+                  <div className="flex justify-between items-center mb-2">
+                    <h3 className="text-sm font-bold text-white">
+                      Chorus Controls
+                    </h3>
+                    <button
+                      onClick={() => {
+                        const [tId, name, index] = key.split("-");
+                        toggleEffectPanel(name, parseInt(index));
+                      }}
+                      className="text-gray-400 hover:text-white"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+
+                  <ChorusControls
+                    effect={engineRef.current.graph.buses
+                      .find((b) => b.id === trackId)
+                      ?.channelStrip.getEffect("Chorus")}
+                  />
+                </div>
+              </div>
+            ) : effectName === "Distortion" && engineRef?.current ? (
+              <div className="w-80 max-h-96 overflow-y-auto">
+                <div className="bg-gray-900 rounded-lg shadow-2xl p-4 border border-gray-700">
+                  <div className="flex justify-between items-center mb-2">
+                    <h3 className="text-sm font-bold text-white">
+                      Distortion Controls
+                    </h3>
+                    <button
+                      onClick={() => {
+                        const [tId, name, index] = key.split("-");
+                        toggleEffectPanel(name, parseInt(index));
+                      }}
+                      className="text-gray-400 hover:text-white"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+
+                  <DistortionControls
+                    effect={engineRef.current.graph.buses
+                      .find((b) => b.id === trackId)
+                      ?.channelStrip.getEffect("Distortion")}
                   />
                 </div>
               </div>
